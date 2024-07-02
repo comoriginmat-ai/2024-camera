@@ -9,8 +9,11 @@
 #include <iostream>
 #include <chrono>
 #include <cstdio>
+#include <thread> // 添加线程库
+#include <mutex> // 添加互斥锁库
 
 namespace py = pybind11;
+
 
 // 将fourcc转换为字符串
 std::string fourccToString(int fourcc) {
@@ -25,6 +28,23 @@ std::string fourccToString(int fourcc) {
     return std::string(arr);
 }
 
+std::mutex mtx; // 用于保护frame的互斥锁
+cv::Mat frame; // 全局变量，用于跨线程共享帧数据
+// 新线程处理函数
+void captureFrames(cv::VideoCapture &cap) {
+    while (true) {
+        auto start = std::chrono::high_resolution_clock::now();
+        if (!cap.read(frame)) {
+            std::cerr << "read frame failed!" << std::endl;
+            break;
+        }
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
+    }
+    cap.release(); // 确保在子线程中释放资源
+}
+
 
 int start() {
     // 释放GIL，避免Python代码阻塞
@@ -32,7 +52,7 @@ int start() {
 
 
     // 初始化视频捕获对象，0代表默认摄像头，如果有多个摄像头，可以尝试1, 2, ...
-    cv::VideoCapture cap(0,cv::CAP_DSHOW);
+    cv::VideoCapture cap(0, cv::CAP_DSHOW);
 
     if (!cap.isOpened()) {
         std::cerr << "can't open camera！" << std::endl;
@@ -40,9 +60,12 @@ int start() {
     }
 
     // 设置视频的帧率、宽度和高度
-    int fps = 30;
-    int width = 1920;
-    int height = 1080;
+//    int fps = 30;
+//    int width = 1920;
+//    int height = 1080;
+    int fps = 60;
+    int width = 640;
+    int height = 480;
     cap.set(cv::CAP_PROP_FPS, fps);
     cap.set(cv::CAP_PROP_FRAME_WIDTH, width);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, height);
@@ -59,29 +82,34 @@ int start() {
     cv::namedWindow("capture", cv::WINDOW_NORMAL);
     cv::resizeWindow("capture", static_cast<int>(width), static_cast<int>(height));
 
-    cv::Mat frame; // 用于存储每一帧的图像数据
+
+    // 启动子线程进行帧捕捉
+    std::thread captureThread(captureFrames, std::ref(cap));
 
     while (true) {
-        // 从相机捕获一帧
-        if (!cap.read(frame)) {
-            std::cerr << "read frame failed！" << std::endl;
-            break;
+        auto start = std::chrono::high_resolution_clock::now();
+        // 保护访问共享的frame
+        mtx.lock();
+        if (!frame.empty()) {
+            cv::imshow("capture", frame);
         }
+        mtx.unlock();
 
-        // 显示帧
-        cv::imshow("capture", frame);
-
-        // 按'q'键退出循环
         int key = cv::waitKey(1) & 0xFF;
-        if (key == 'q' || key == 27) { // 27 是 ESC 键的ASCII码
+        if (key == 'q' || key == 27) {
             break;
         }
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+//        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
     }
 
-    // 释放资源并关闭窗口
-    cap.release();
-    cv::destroyAllWindows();
+    // 等待子线程结束
+    captureThread.join();
 
+
+    // 释放窗口
+    cv::destroyAllWindows();
     return 0;
 }
 
