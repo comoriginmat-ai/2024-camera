@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <thread> // 添加线程库
 #include <mutex> // 添加互斥锁库
+#include <deque> // 用于存放帧的双端队列
+
 
 namespace py = pybind11;
 
@@ -34,15 +36,54 @@ cv::Mat frame; // 全局变量，用于跨线程共享帧数据
 void captureFrames(cv::VideoCapture &cap) {
     while (true) {
         auto start = std::chrono::high_resolution_clock::now();
+        //--------------------------------------------------------------------
         if (!cap.read(frame)) {
             std::cerr << "read frame failed!" << std::endl;
             break;
         }
+
+        //--------------------------------------------------------------------
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
         std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
     }
     cap.release(); // 确保在子线程中释放资源
+}
+
+std::deque<cv::Mat> frameQueue; // 双端队列用于存储帧
+std::mutex queueMutex; // 保护队列的互斥锁
+bool stopCapture = false; // 标记是否停止捕获
+#define MAX_QUEUE_SIZE 10
+
+// 修改后的帧读取函数
+void captureFrames_queue(cv::VideoCapture &cap) {
+    while (!stopCapture) {
+        auto start = std::chrono::high_resolution_clock::now();
+        //--------------------------------------------------------------------
+        cv::Mat frame;
+        if (!cap.read(frame)) {
+            std::cerr << "read frame failed!" << std::endl;
+            break;
+        }
+
+        // 加锁，将帧添加到队列中，然后立即解锁
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            frameQueue.push_back(frame.clone()); // 使用clone避免意外的内存管理问题
+            // std::cout << "Frame queue size: " << frameQueue.size() << std::endl;
+            // 如果队列太长，考虑移除最早的帧以避免无限增长
+            if (frameQueue.size() > MAX_QUEUE_SIZE) {
+                frameQueue.pop_front();
+                std::cout << "Frame queue size exceeds limit, removing oldest frame." << std::endl;
+            }
+        }
+
+        //--------------------------------------------------------------------
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
+    }
+    cap.release();
 }
 
 
@@ -60,12 +101,12 @@ int start() {
     }
 
     // 设置视频的帧率、宽度和高度
-//    int fps = 30;
-//    int width = 1920;
-//    int height = 1080;
-    int fps = 60;
-    int width = 640;
-    int height = 480;
+    int fps = 30;
+    int width = 1920;
+    int height = 1080;
+//    int fps = 60;
+//    int width = 640;
+//    int height = 480;
     cap.set(cv::CAP_PROP_FPS, fps);
     cap.set(cv::CAP_PROP_FRAME_WIDTH, width);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, height);
@@ -84,21 +125,38 @@ int start() {
 
 
     // 启动子线程进行帧捕捉
-    std::thread captureThread(captureFrames, std::ref(cap));
+    // std::thread captureThread(captureFrames, std::ref(cap));
+    std::thread captureThread(captureFrames_queue, std::ref(cap));
 
     while (true) {
         auto start = std::chrono::high_resolution_clock::now();
-        // 保护访问共享的frame
-        mtx.lock();
-        if (!frame.empty()) {
-            cv::imshow("capture", frame);
+        //--------------------------------------------------------------------
+        cv::Mat currentFrame;
+
+        // 加锁，检查并获取最新帧，解锁
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            if (!frameQueue.empty()) {
+                currentFrame = frameQueue.front();
+                frameQueue.pop_front(); // 这将删除队列中的第一个元素
+            } else {
+                // std::cout << "Frame queue is empty, waiting for new frames." << std::endl;
+                continue; // 如果队列为空，直接跳过本次循环
+            }
         }
-        mtx.unlock();
+
+        if (!currentFrame.empty()) {
+            cv::imshow("capture", currentFrame);
+        }
 
         int key = cv::waitKey(1) & 0xFF;
         if (key == 'q' || key == 27) {
+            stopCapture = true; // 设置标志，通知读取线程停止
             break;
         }
+
+
+        //--------------------------------------------------------------------
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
 //        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
