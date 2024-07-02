@@ -3,8 +3,20 @@
 #include <opencv2/opencv.hpp>
 #include <utility>
 #include "cvxFont.h"
+#include <iostream>
+#include <chrono>
+#include <cstdio>
 
 namespace py = pybind11;
+
+// 使用单例模式管理字体实例
+class FontManager {
+public:
+    static cvx::CvxFont& GetInstance() {
+        static cvx::CvxFont instance("Noto.ttf"); // 静态局部变量，只会初始化一次
+        return instance;
+    }
+};
 
 
 cv::String msg = "这段代码首先初始化FreeType库，然后加载宋体字体文件，并设置字体大小。";
@@ -48,8 +60,16 @@ cv::Mat numpy_to_mat(py::array_t<unsigned char> img) {
 
 void display_image(py::array_t<unsigned char> img) {
     cv::Mat mat = numpy_to_mat(std::move(img));
-    // 添加汉字文本
-    cvx::CvxFont font("Noto.ttf");
+
+//    auto start = std::chrono::high_resolution_clock::now();
+    cvx::CvxFont& font = FontManager::GetInstance();
+
+
+//    auto stop = std::chrono::high_resolution_clock::now();
+//    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+//    std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
+
+
     putText(mat, msg, cv::Point(100, 100), font, 30, cv::Scalar(255, 255, 255));
     putText(mat, msg, cv::Point(100, 200), font, 30, cv::Scalar(255, 255, 255));
     putText(mat, msg, cv::Point(100, 300), font, 30, cv::Scalar(255, 255, 255));
