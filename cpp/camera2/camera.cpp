@@ -24,7 +24,7 @@ public:
     ~ScopeTimer() {
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-        std::cout << message << " took " << duration << " microseconds" << std::endl;
+        std::cout << message << " took " << duration / 1000.0 << " ms" << std::endl;
     }
 
 private:
@@ -74,30 +74,28 @@ bool stopCapture = false; // 标记是否停止捕获
 // 修改后的帧读取函数
 void captureFrames_queue(cv::VideoCapture &cap) {
     while (!stopCapture) {
-        auto start = std::chrono::high_resolution_clock::now();
-        //--------------------------------------------------------------------
-        cv::Mat frame;
-        if (!cap.read(frame)) {
-            std::cerr << "read frame failed!" << std::endl;
-            break;
-        }
-
-        // 加锁，将帧添加到队列中，然后立即解锁
         {
-            std::lock_guard<std::mutex> lock(queueMutex);
-            frameQueue.push_back(frame.clone()); // 使用clone避免意外的内存管理问题
-            // std::cout << "Frame queue size: " << frameQueue.size() << std::endl;
-            // 如果队列太长，考虑移除最早的帧以避免无限增长
-            if (frameQueue.size() > MAX_QUEUE_SIZE) {
-                frameQueue.pop_front();
-                std::cout << "Frame queue size exceeds limit, removing oldest frame." << std::endl;
+            // ScopeTimer timer("captureFrames_queue");
+            cv::Mat frame;
+            if (!cap.read(frame)) {
+                std::cerr << "read frame failed!" << std::endl;
+                break;
+            }
+
+            // 加锁，将帧添加到队列中，然后立即解锁
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                frameQueue.push_back(frame.clone()); // 使用clone避免意外的内存管理问题
+                // std::cout << "Frame queue size: " << frameQueue.size() << std::endl;
+                // 如果队列太长，考虑移除最早的帧以避免无限增长
+                if (frameQueue.size() > MAX_QUEUE_SIZE) {
+                    frameQueue.pop_front();
+                    std::cout << "Frame queue size exceeds limit, removing oldest frame." << std::endl;
+                }
             }
         }
 
-        //--------------------------------------------------------------------
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-//        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
+
     }
     cap.release();
 }
@@ -146,34 +144,32 @@ int start() {
 
     while (true) {
 
+        ScopeTimer timer("capture");
+        cv::Mat currentFrame;
+
+        // 加锁，检查并获取最新帧，解锁
         {
-            ScopeTimer timer("capture");
-            cv::Mat currentFrame;
 
-            // 加锁，检查并获取最新帧，解锁
-            {
-                std::lock_guard<std::mutex> lock(queueMutex);
-                if (!frameQueue.empty()) {
-                    currentFrame = frameQueue.front();
-                    frameQueue.pop_front(); // 这将删除队列中的第一个元素
-                } else {
-                    // std::cout << "Frame queue is empty, waiting for new frames." << std::endl;
-                    continue; // 如果队列为空，直接跳过本次循环
-                }
-            }
-
-            if (!currentFrame.empty()) {
-                cv::imshow("capture", currentFrame);
-            }
-
-            int key = cv::waitKey(1) & 0xFF;
-            if (key == 'q' || key == 27) {
-                stopCapture = true; // 设置标志，通知读取线程停止
-                break;
+            std::lock_guard<std::mutex> lock(queueMutex);
+            if (!frameQueue.empty()) {
+                currentFrame = frameQueue.front();
+                frameQueue.pop_front(); // 这将删除队列中的第一个元素
+            } else {
+                // std::cout << "Frame queue is empty, waiting for new frames." << std::endl;
+                continue; // 如果队列为空，直接跳过本次循环
             }
         }
 
+        if (!currentFrame.empty()) {
 
+            cv::imshow("capture", currentFrame);
+        }
+
+        int key = cv::waitKey(1) & 0xFF;
+        if (key == 'q' || key == 27) {
+            stopCapture = true; // 设置标志，通知读取线程停止
+            break;
+        }
     }
 
     // 等待子线程结束
