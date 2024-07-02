@@ -83,7 +83,7 @@ void display_image(py::array_t<unsigned char> img) {
     cv::waitKey(1);
 }
 
-PYBIND11_MODULE(camera, m) {
+PYBIND11_MODULE(camera1, m) {
     m.doc() = "A module for displaying images with OpenCV";
     m.def("display_image", &display_image, "Display an image using OpenCV",py::arg("frame"));
 }

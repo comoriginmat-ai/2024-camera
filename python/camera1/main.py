@@ -1,11 +1,12 @@
 import cv2
 import sys
-
-sys.path.append("C:/Users/gzyit/CLionProjects/pybind11/cmake-build-release")
-import camera
-
 import time
 import functools
+
+sys.path.append("C:/Users/gzyit/CLionProjects/pybind11/cpp/camera1/cmake-build-release")
+import camera1
+
+
 
 
 def log_execution_time(func):
@@ -22,7 +23,7 @@ def log_execution_time(func):
 
 # @log_execution_time
 def show_image(img):
-    camera.display_image(img)
+    camera1.display_image(img)
 
 
 def init_camera():
