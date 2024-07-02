@@ -16,6 +16,22 @@
 
 namespace py = pybind11;
 
+// 计时器类，用于统计函数执行时间
+class ScopeTimer {
+public:
+    explicit ScopeTimer(const std::string &msg = "") : message(msg), start(std::chrono::high_resolution_clock::now()) {}
+
+    ~ScopeTimer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        std::cout << message << " took " << duration << " microseconds" << std::endl;
+    }
+
+private:
+    std::string message;
+    std::chrono::time_point<std::chrono::high_resolution_clock> start;
+};
+
 
 // 将fourcc转换为字符串
 std::string fourccToString(int fourcc) {
@@ -81,7 +97,7 @@ void captureFrames_queue(cv::VideoCapture &cap) {
         //--------------------------------------------------------------------
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
+//        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
     }
     cap.release();
 }
@@ -129,37 +145,35 @@ int start() {
     std::thread captureThread(captureFrames_queue, std::ref(cap));
 
     while (true) {
-        auto start = std::chrono::high_resolution_clock::now();
-        //--------------------------------------------------------------------
-        cv::Mat currentFrame;
 
-        // 加锁，检查并获取最新帧，解锁
         {
-            std::lock_guard<std::mutex> lock(queueMutex);
-            if (!frameQueue.empty()) {
-                currentFrame = frameQueue.front();
-                frameQueue.pop_front(); // 这将删除队列中的第一个元素
-            } else {
-                // std::cout << "Frame queue is empty, waiting for new frames." << std::endl;
-                continue; // 如果队列为空，直接跳过本次循环
+            ScopeTimer timer("capture");
+            cv::Mat currentFrame;
+
+            // 加锁，检查并获取最新帧，解锁
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                if (!frameQueue.empty()) {
+                    currentFrame = frameQueue.front();
+                    frameQueue.pop_front(); // 这将删除队列中的第一个元素
+                } else {
+                    // std::cout << "Frame queue is empty, waiting for new frames." << std::endl;
+                    continue; // 如果队列为空，直接跳过本次循环
+                }
+            }
+
+            if (!currentFrame.empty()) {
+                cv::imshow("capture", currentFrame);
+            }
+
+            int key = cv::waitKey(1) & 0xFF;
+            if (key == 'q' || key == 27) {
+                stopCapture = true; // 设置标志，通知读取线程停止
+                break;
             }
         }
 
-        if (!currentFrame.empty()) {
-            cv::imshow("capture", currentFrame);
-        }
 
-        int key = cv::waitKey(1) & 0xFF;
-        if (key == 'q' || key == 27) {
-            stopCapture = true; // 设置标志，通知读取线程停止
-            break;
-        }
-
-
-        //--------------------------------------------------------------------
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-//        std::cout << "Function execution time: " << duration.count() << " ms" << std::endl;
     }
 
     // 等待子线程结束
